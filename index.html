@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Quản Lý Chi Tiêu Theo Kỳ Hạn v5.0 Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
+    
+    <style>
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+        .day-item { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; transition: all 0.2s; position: relative; font-size: 11px; font-weight: 600; }
+        #zoomWrapper { transform-origin: top center; transition: transform 0.2s ease-in-out; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans text-gray-800 antialiased">
+
+    <div class="fixed bottom-5 right-5 z-[9999] bg-white shadow-lg rounded-full border p-1.5 flex items-center gap-2 opacity-90 hover:opacity-100 transition">
+        <button id="btnZoomOut" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center font-bold text-gray-600 text-sm"><i class="fa-solid fa-minus"></i></button>
+        <span id="txtZoomLevel" class="text-xs font-bold px-1 text-gray-700 min-w-[40px] text-center">100%</span>
+        <button id="btnZoomIn" class="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center font-bold text-sm"><i class="fa-solid fa-plus"></i></button>
+    </div>
+
+    <div id="zoomWrapper">
+        <div id="screenAuth" class="min-h-screen flex items-center justify-center p-4">
+            <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-md space-y-6">
+                <div class="text-center">
+                    <i class="fa-solid fa-shield-halved text-4xl text-blue-600 mb-2"></i>
+                    <h2 id="authTitle" class="text-2xl font-bold">Đăng Nhập Hệ Thống</h2>
+                    <p class="text-sm text-gray-500 mt-1">Quản lý tài chính cá nhân v5.0</p>
+                </div>
+                <form id="authForm" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 uppercase">Tài khoản</label>
+                        <input type="text" id="authUsername" required class="w-full mt-1 p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 uppercase">Mật khẩu</label>
+                        <input type="password" id="authPassword" required class="w-full mt-1 p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <button type="submit" id="btnAuthSubmit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition shadow-md">Đăng Nhập</button>
+                </form>
+                <div class="text-center text-sm">
+                    <button id="btnToggleAuth" class="text-blue-600 font-semibold hover:underline">Chưa có tài khoản? Đăng ký ngay</button>
+                </div>
+            </div>
+        </div>
+
+        <nav id="appNavbar" class="hidden bg-white shadow-sm px-4 py-3 flex justify-between items-center border-b sticky top-0 z-50">
+            <div class="flex items-center gap-2 cursor-pointer" id="navLogo">
+                <i class="fa-solid fa-wallet text-xl text-blue-600"></i>
+                <span class="font-bold text-lg text-gray-800">Finance Pro v5</span>
+            </div>
+            <div class="flex items-center gap-4 text-sm">
+                <span class="font-medium text-gray-600"><i class="fa-solid fa-user mr-1 text-gray-400"></i><span id="userDisplay"></span></span>
+                <button id="btnLogout" class="text-red-500 font-semibold hover:underline"><i class="fa-solid fa-arrow-right-from-bracket mr-1"></i>Đăng xuất</button>
+            </div>
+        </nav>
+
+        <div id="screenPeriods" class="hidden max-w-4xl mx-auto p-4 md:p-6 w-full space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h2 class="text-xl font-bold text-gray-800 mb-2"><i class="fa-solid fa-calendar-plus text-blue-500 mr-2"></i>Tạo Kỳ Hạn Quản Lý Mới</h2>
+                <form id="periodForm" class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end text-xs">
+                    <div>
+                        <label class="block font-semibold text-gray-600 mb-1">Tên gọi / Tên Tháng</label>
+                        <input type="text" id="pName" required placeholder="Ví dụ: Tháng 1..." class="w-full border p-2.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-600 mb-1">Từ ngày</label>
+                        <input type="date" id="pStart" required class="w-full border p-2.5 rounded-lg focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block font-semibold text-gray-600 mb-1">Đến ngày</label>
+                        <input type="date" id="pEnd" required class="w-full border p-2.5 rounded-lg focus:outline-none">
+                    </div>
+                    <div class="sm:col-span-3">
+                        <button type="submit" class="w-full sm:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition shadow-sm">+ Tạo Kỳ Hạn Mới</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="space-y-3">
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider"><i class="fa-solid fa-list text-gray-400 mr-2"></i>Danh Sách Kỳ Hạn Chi Tiêu Của Bạn</h3>
+                <div id="periodListSlot" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                <div id="emptyPeriodMsg" class="hidden text-center py-12 bg-white rounded-xl border border-dashed border-gray-300 text-gray-400">
+                    <p class="text-sm font-medium">Chưa có kỳ hạn quản lý nào được tạo.</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="screenWorkspace" class="hidden max-w-7xl mx-auto p-4 md:p-6 w-full space-y-6">
+            
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between bg-white p-3 rounded-xl shadow-sm border gap-3">
+                <button id="btnBackToPeriods" class="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-1.5">
+                    <i class="fa-solid fa-arrow-left"></i> Quay lại danh sách kỳ hạn
+                </button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="btnExportExcel" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-xs shadow-sm"><i class="fa-solid fa-file-excel mr-1"></i> Xuất Excel</button>
+                    <button id="btnExportPDF" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs shadow-sm"><i class="fa-solid fa-file-pdf mr-1"></i> Xuất PDF</button>
+                </div>
+                <div class="text-right text-xs">
+                    <span id="workspaceTitle" class="font-bold text-gray-800 text-sm bg-blue-50 px-2 py-0.5 rounded text-blue-700"></span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-blue-500">
+                    <span class="text-xs text-gray-400 font-bold uppercase">Số dư trong kỳ</span>
+                    <p id="txtBalance" class="text-xl font-bold text-gray-800 mt-1">0 đ</p>
+                </div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-green-500">
+                    <span class="text-xs text-gray-400 font-bold uppercase">Tổng thu nhập (+)</span>
+                    <p id="txtIncome" class="text-xl font-bold text-green-600 mt-1">0 đ</p>
+                </div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-red-500">
+                    <span class="text-xs text-gray-400 font-bold uppercase">Tổng chi tiêu (-)</span>
+                    <p id="txtExpense" class="text-xl font-bold text-red-600 mt-1">0 đ</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                
+                <div class="space-y-4">
+                    <div class="bg-white p-4 rounded-xl shadow-sm border">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 id="formActionTitle" class="font-bold text-gray-700 text-sm"><i class="fa-solid fa-plus text-blue-500 mr-2"></i>Thêm Giao Dịch</h3>
+                            <button id="btnCancelEdit" class="hidden text-xs text-red-500 font-semibold hover:underline">Hủy sửa</button>
+                        </div>
+                        <form id="transForm" class="space-y-3 text-xs">
+                            <input type="hidden" id="editingTransId">
+                            <div class="grid grid-cols-2 gap-2">
+                                <button type="button" id="typeExp" class="py-2 font-bold rounded-lg transition">CHI (-)</button>
+                                <button type="button" id="typeInc" class="py-2 font-bold rounded-lg transition">THU (+)</button>
+                            </div>
+                            <div>
+                                <label class="font-medium text-gray-600">Số tiền (VND)</label>
+                                <input type="text" id="inpAmountDisplay" required class="w-full border p-2 rounded focus:outline-none text-base font-bold text-blue-600" placeholder="0">
+                            </div>
+                            <div>
+                                <label class="font-medium text-gray-600">Mục đích sử dụng</label>
+                                <select id="inpCategory" class="w-full border p-2 rounded focus:outline-none"></select>
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="font-medium text-gray-600">Ngày thực hiện</label>
+                                    <button type="button" id="btnToday" class="text-[10px] text-blue-600 font-bold hover:underline">Nút "Hôm nay"</button>
+                                </div>
+                                <input type="date" id="inpDate" required class="w-full border p-2 rounded focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="font-medium text-gray-600">Ghi chú chi tiết</label>
+                                <input type="text" id="inpNote" class="w-full border p-2 rounded focus:outline-none" placeholder="Ghi chú...">
+                            </div>
+                            <button type="submit" id="btnSubmitForm" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition">Ghi Vào Hệ Thống</button>
+                        </form>
+                    </div>
+
+                    <div class="bg-white p-4 rounded-xl shadow-sm border text-xs">
+                        <h3 class="font-bold text-gray-700 mb-2 text-sm"><i class="fa-solid fa-chart-pie text-blue-500 mr-2"></i>Biểu Đồ Cơ Cấu Chi Tiêu</h3>
+                        <div class="w-32 h-32 mx-auto my-3"><canvas id="chartCanvas"></canvas></div>
+                        <div id="chartLegendTable" class="space-y-1"></div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-2 space-y-4">
+                    
+                    <div class="bg-white p-4 rounded-xl shadow-sm border space-y-4">
+                        <div class="flex flex-col sm:flex-row justify-between sm:items-center border-b pb-3 gap-2">
+                            <h3 class="font-bold text-gray-800 text-sm"><i class="fa-solid fa-calendar-days text-indigo-500 mr-2"></i>📅 Quản Lý Giao Dịch Theo Ngày</h3>
+                            <div class="text-[11px] font-semibold flex items-center gap-3">
+                                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500 block"></span>Có giao dịch</span>
+                                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-500 block"></span>Đang chọn</span>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+                            <div class="md:col-span-5 border p-2 rounded-lg bg-gray-50/50">
+                                <div id="calendarHeader" class="text-center font-bold text-xs text-gray-600 mb-2">Tháng</div>
+                                <div class="calendar-grid text-center text-[10px] font-bold text-gray-400 mb-1">
+                                    <div>T2</div><div>T3</div><div>T4</div><div>T5</div><div>T6</div><div>T7</div><div>CN</div>
+                                </div>
+                                <div id="calendarDays" class="calendar-grid"></div>
+                            </div>
+
+                            <div class="md:col-span-7 bg-indigo-50/40 border border-indigo-100 rounded-lg p-3 space-y-2">
+                                <div class="flex justify-between items-center font-bold text-xs text-indigo-900 border-b border-indigo-100 pb-1.5">
+                                    <span>Chi tiết ngày: <span id="lblSelectedDay">-</span></span>
+                                    <span id="lblDayBalance" class="text-gray-800">0đ</span>
+                                </div>
+                                <div id="selectedDayTransList" class="space-y-1.5 max-h-[160px] overflow-y-auto text-xs"></div>
+                                <div class="grid grid-cols-2 gap-2 pt-2 border-t border-indigo-100 text-[11px] font-bold">
+                                    <div class="text-green-600">Thu ngày: <span id="lblDayIncome">0đ</span></div>
+                                    <div class="text-red-500 text-right">Chi ngày: <span id="lblDayExpense">0đ</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-4 rounded-xl shadow-sm border">
+                        <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-3">
+                            <h3 class="font-bold text-gray-700 text-sm"><i class="fa-solid fa-receipt text-blue-500 mr-2"></i>Nhật Ký Toàn Bộ Giao Dịch Trong Kỳ</h3>
+                            <div class="relative w-full sm:w-48">
+                                <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-gray-400 text-xs"></i>
+                                <input type="text" id="inpSearch" placeholder="Tìm kiếm mục đích, ghi chú..." class="w-full text-xs border pl-8 pr-2 py-1.5 rounded-lg focus:outline-none">
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-xs border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-50 text-gray-500 font-bold uppercase border-b">
+                                        <th class="p-3">Ngày sử dụng</th>
+                                        <th class="p-3">Mục đích</th>
+                                        <th class="p-3">Ghi chú</th>
+                                        <th class="p-3 text-right">Số tiền</th>
+                                        <th class="p-3 text-center">Tác vụ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tableBody" class="divide-y divide-gray-100 font-medium"></tbody>
+                            </table>
+                        </div>
+                        <div id="emptyTransMsg" class="hidden text-center py-8 text-gray-400">Không tìm thấy dữ liệu phù hợp.</div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const categoriesDef = {
+            expense: ['Ăn uống', 'Di chuyển / Đi lại', 'Mua sắm cá nhân', 'Hóa đơn gia đình', 'Giải trí / Bạn bè', 'Sức khỏe', 'Khác'],
+            income: ['Tiền lương', 'Tiền thưởng', 'Kinh doanh / Đầu tư', 'Khác']
+        };
+
+        let dbUsers = JSON.parse(localStorage.getItem('v5_users')) || {};
+        let loggedUser = localStorage.getItem('v5_logged_user') || null;
+        let dbPeriods = JSON.parse(localStorage.getItem('v5_periods')) || [];
+        let dbTransactions = JSON.parse(localStorage.getItem('v5_transactions')) || [];
+
+        let authIsLogin = true;
+        let selectedPeriodId = null; 
+        let activeTransType = localStorage.getItem('v5_active_type') || 'expense'; 
+        let selectedDateStr = ""; 
+        let activeChart = null;
+
+        const fmtMoney = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v);
+        const fmtDate = (d) => d ? d.split('-').reverse().join('/') : '';
+        const getTodayIso = () => {
+            const now = new Date();
+            const offset = now.getTimezoneOffset();
+            const localDate = new Date(now.getTime() - (offset * 60 * 1000));
+            return localDate.toISOString().split('T')[0];
+        };
+
+        const sAuth = document.getElementById('screenAuth');
+        const sPeriods = document.getElementById('screenPeriods');
+        const sWorkspace = document.getElementById('screenWorkspace');
+        const navbar = document.getElementById('appNavbar');
+
+        // --- HÀM THU PHÓNG (ZOOM) TRANG WEB ---
+        const zoomLevels = [80, 90, 100, 110, 120, 130, 140, 150];
+        let currentZoomIndex = 2;
+        function applyZoom() {
+            let percentage = zoomLevels[currentZoomIndex];
+            document.getElementById('txtZoomLevel').textContent = percentage + "%";
+            document.getElementById('zoomWrapper').style.transform = `scale(${percentage / 100})`;
+            document.getElementById('zoomWrapper').style.width = `${10000 / percentage}%`;
+        }
+        document.getElementById('btnZoomIn').onclick = () => { if (currentZoomIndex < zoomLevels.length - 1) { currentZoomIndex++; applyZoom(); } };
+        document.getElementById('btnZoomOut').onclick = () => { if (currentZoomIndex > 0) { currentZoomIndex--; applyZoom(); } };
+
+        // --- FORMAT TIỀN TỆ THỜI GIAN THỰC KHI NHẬP (ĐÃ KHẮC PHỤC LỖI NHẢY SỐ HOÀN TOÀN) ---
+        const inpAmountDisplay = document.getElementById('inpAmountDisplay');
+        inpAmountDisplay.oninput = (e) => {
+            let cleanVal = e.target.value.replace(/[^0-9]/g, '');
+            if(cleanVal) {
+                e.target.value = parseInt(cleanVal).toLocaleString('vi-VN');
+            } else {
+                e.target.value = '';
+            }
+        };
+
+        const getInpAmountValue = () => parseInt(inpAmountDisplay.value.replace(/[^0-9]/g, '')) || 0;
+        
+        // Sửa cơ chế: Thay thế trực tiếp giá trị chuỗi hiển thị, tránh xung đột kích hoạt ngược sự kiện oninput
+        const setInpAmountValue = (num) => { 
+            inpAmountDisplay.value = num ? parseInt(num).toLocaleString('vi-VN') : ''; 
+        };
+
+        // --- ĐIỀU HƯỚNG MÀN HÌNH ---
+        function showAuthScreen() { sAuth.classList.remove('hidden'); sPeriods.classList.add('hidden'); sWorkspace.classList.add('hidden'); navbar.classList.add('hidden'); }
+        function showPeriodsScreen() {
+            sAuth.classList.add('hidden'); sPeriods.classList.remove('hidden'); sWorkspace.classList.add('hidden'); navbar.classList.remove('hidden');
+            document.getElementById('userDisplay').textContent = loggedUser;
+            renderPeriods();
+        }
+        function showWorkspaceScreen(periodId) {
+            selectedPeriodId = periodId;
+            sAuth.classList.add('hidden'); sPeriods.classList.add('hidden'); sWorkspace.classList.remove('hidden'); navbar.classList.remove('hidden');
+            
+            let p = dbPeriods.find(x => x.id === periodId);
+            document.getElementById('workspaceTitle').textContent = `${p.name} (${fmtDate(p.start)} ➔ ${fmtDate(p.end)})`;
+            
+            const today = getTodayIso();
+            document.getElementById('inpDate').value = today;
+            selectedDateStr = today;
+
+            setFormType(activeTransType);
+            cancelEditMode();
+            updateWorkspaceUI();
+        }
+
+        document.getElementById('btnToday').onclick = () => {
+            const today = getTodayIso();
+            document.getElementById('inpDate').value = today;
+            selectedDateStr = today;
+            buildCalendar();
+            renderSelectedDayView();
+        };
+
+        // --- XỬ LÝ ĐĂNG NHẬP / ĐĂNG KÝ ---
+        const btnToggleAuth = document.getElementById('btnToggleAuth');
+        btnToggleAuth.onclick = () => {
+            authIsLogin = !authIsLogin;
+            document.getElementById('authTitle').textContent = authIsLogin ? "Đăng Nhập Hệ Thống" : "Đăng Ký Tài Khoản";
+            document.getElementById('btnAuthSubmit').textContent = authIsLogin ? "Đăng Nhập" : "Đăng Ký";
+            btnToggleAuth.textContent = authIsLogin ? "Chưa có tài khoản? Đăng ký" : "Quay lại đăng nhập";
+        };
+        document.getElementById('authForm').onsubmit = (e) => {
+            e.preventDefault();
+            const u = document.getElementById('authUsername').value.trim();
+            const p = document.getElementById('authPassword').value;
+            if(!authIsLogin) {
+                if(dbUsers[u]) { alert('Tài khoản đã tồn tại!'); return; }
+                dbUsers[u] = p; localStorage.setItem('v5_users', JSON.stringify(dbUsers));
+                alert('Đăng ký thành công!'); authIsLogin = true; btnToggleAuth.click();
+            } else {
+                if(dbUsers[u] && dbUsers[u] === p) {
+                    loggedUser = u; localStorage.setItem('v5_logged_user', u); showPeriodsScreen();
+                } else alert('Sai tài khoản hoặc mật khẩu!');
+            }
+            document.getElementById('authForm').reset();
+        };
+        document.getElementById('btnLogout').onclick = () => { localStorage.removeItem('v5_logged_user'); loggedUser = null; showAuthScreen(); };
+        document.getElementById('navLogo').onclick = () => { if(loggedUser) showPeriodsScreen(); };
+        document.getElementById('btnBackToPeriods').onclick = () => showPeriodsScreen();
+
+        // --- XỬ LÝ KỲ HẠN ---
+        document.getElementById('periodForm').onsubmit = (e) => {
+            e.preventDefault();
+            const name = document.getElementById('pName').value.trim();
+            const start = document.getElementById('pStart').value;
+            const textEnd = document.getElementById('pEnd').value;
+            if(new Date(start) > new Date(textEnd)) { alert('Ngày bắt đầu không hợp lệ!'); return; }
+            dbPeriods.push({ id: Date.now(), user: loggedUser, name, start, end: textEnd });
+            localStorage.setItem('v5_periods', JSON.stringify(dbPeriods));
+            document.getElementById('pName').value = '';
+            renderPeriods();
+        };
+
+        function renderPeriods() {
+            const container = document.getElementById('periodListSlot');
+            container.innerHTML = '';
+            let userPeriods = dbPeriods.filter(p => p.user === loggedUser).sort((a,b) => b.id - a.id);
+            document.getElementById('emptyPeriodMsg').className = userPeriods.length === 0 ? 'block' : 'hidden';
+            
+            userPeriods.forEach(p => {
+                let cost = dbTransactions.filter(t => t.periodId === p.id && t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+                container.innerHTML += `
+                    <div class="bg-white p-5 rounded-xl shadow-sm border hover:border-blue-500 transition flex flex-col justify-between">
+                        <div>
+                            <div class="flex justify-between items-start">
+                                <h4 class="font-bold text-gray-800 text-base">${p.name}</h4>
+                                <button onclick="deletePeriod(event, ${p.id})" class="text-gray-300 hover:text-red-500 transition text-xs"><i class="fa-regular fa-trash-can"></i> Xóa kỳ</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Khoảng: ${fmtDate(p.start)} ➔ ${fmtDate(p.end)}</p>
+                        </div>
+                        <div class="mt-5 pt-3 border-t flex justify-between items-center">
+                            <span class="text-xs font-bold text-red-500">Đã chi: ${cost.toLocaleString()}đ</span>
+                            <button onclick="showWorkspaceScreen(${p.id})" class="px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-lg transition shadow-xs">Vào Quản Lý</button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        window.deletePeriod = (event, id) => {
+            event.stopPropagation();
+            if(confirm('Bạn có chắc chắn muốn xóa kỳ hạn này?')) {
+                dbPeriods = dbPeriods.filter(p => p.id !== id);
+                dbTransactions = dbTransactions.filter(t => t.periodId !== id);
+                localStorage.setItem('v5_periods', JSON.stringify(dbPeriods));
+                localStorage.setItem('v5_transactions', JSON.stringify(dbTransactions));
+                renderPeriods();
+            }
+        };
+
+        // --- WORKSPACE LOGIC ---
+        function setFormType(t) {
+            activeTransType = t;
+            localStorage.setItem('v5_active_type', t);
+            document.getElementById('typeExp').className = t === 'expense' ? "py-2 bg-red-500 text-white font-bold rounded-lg w-full shadow-xs" : "py-2 bg-gray-200 text-gray-700 font-bold rounded-lg w-full";
+            document.getElementById('typeInc').className = t === 'income' ? "py-2 bg-green-500 text-white font-bold rounded-lg w-full shadow-xs" : "py-2 bg-gray-200 text-gray-700 font-bold rounded-lg w-full";
+            
+            const sel = document.getElementById('inpCategory'); sel.innerHTML = '';
+            categoriesDef[activeTransType].forEach(c => sel.innerHTML += `<option value="${c}">${c}</option>`);
+        }
+        document.getElementById('typeExp').onclick = () => setFormType('expense');
+        document.getElementById('typeInc').onclick = () => setFormType('income');
+
+        document.getElementById('transForm').onsubmit = (e) => {
+            e.preventDefault();
+            const amount = getInpAmountValue();
+            if(amount <= 0) { alert('Vui lòng nhập số tiền hợp lệ!'); return; }
+            const category = document.getElementById('inpCategory').value;
+            const date = document.getElementById('inpDate').value;
+            const note = document.getElementById('inpNote').value.trim();
+            const editId = document.getElementById('editingTransId').value;
+
+            if(editId) { 
+                let transIdx = dbTransactions.findIndex(t => t.id == editId);
+                if(transIdx !== -1) {
+                    dbTransactions[transIdx] = { ...dbTransactions[transIdx], type: activeTransType, amount, category, date, note };
+                }
+                cancelEditMode();
+            } else { 
+                dbTransactions.push({ id: Date.now(), periodId: selectedPeriodId, type: activeTransType, amount, category, date, note });
+            }
+
+            localStorage.setItem('v5_transactions', JSON.stringify(dbTransactions));
+            setInpAmountValue(0);
+            document.getElementById('inpNote').value = '';
+            
+            selectedDateStr = date;
+            updateWorkspaceUI();
+        };
+
+        window.startEditTrans = (id) => {
+            let t = dbTransactions.find(x => x.id == id);
+            if(!t) return;
+            document.getElementById('formActionTitle').innerHTML = `<i class="fa-solid fa-pen-to-square text-amber-500 mr-2"></i>Sửa Giao Dịch`;
+            document.getElementById('editingTransId').value = t.id;
+            setFormType(t.type);
+            setInpAmountValue(t.amount); // Đã an toàn tuyệt đối, không gây lặp lại dữ liệu
+            document.getElementById('inpCategory').value = t.category;
+            document.getElementById('inpDate').value = t.date;
+            document.getElementById('inpNote').value = t.note;
+            document.getElementById('btnSubmitForm').className = "w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 rounded-lg transition shadow-sm";
+            document.getElementById('btnSubmitForm').textContent = "Cập Nhật Thay Đổi";
+            document.getElementById('btnCancelEdit').classList.remove('hidden');
+            window.scrollTo({ top: document.getElementById('transForm').offsetTop - 20, behavior: 'smooth' });
+        };
+
+        function cancelEditMode() {
+            document.getElementById('formActionTitle').innerHTML = `<i class="fa-solid fa-plus text-blue-500 mr-2"></i>Thêm Giao Dịch`;
+            document.getElementById('editingTransId').value = '';
+            setInpAmountValue(0);
+            document.getElementById('inpNote').value = '';
+            document.getElementById('btnSubmitForm').className = "w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition shadow-sm";
+            document.getElementById('btnSubmitForm').textContent = "Ghi Vào Hệ Thống";
+            document.getElementById('btnCancelEdit').classList.add('hidden');
+        }
+        document.getElementById('btnCancelEdit').onclick = () => cancelEditMode();
+
+        window.deleteTrans = (id) => {
+            if(confirm('Bạn có muốn xóa mục kê khai tài chính này không?')) {
+                dbTransactions = dbTransactions.filter(t => t.id !== id);
+                localStorage.setItem('v5_transactions', JSON.stringify(dbTransactions));
+                updateWorkspaceUI();
+            }
+        };
+
+        function buildCalendar() {
+            const container = document.getElementById('calendarDays');
+            container.innerHTML = '';
+            let p = dbPeriods.find(x => x.id === selectedPeriodId);
+            if(!p) return;
+
+            let startObj = new Date(p.start);
+            let endObj = new Date(p.end);
+            
+            document.getElementById('calendarHeader').textContent = `Chu kỳ: ${startObj.getDate()}/${startObj.getMonth()+1} - ${endObj.getDate()}/${endObj.getMonth()+1}`;
+
+            let loop = new Date(p.start);
+            let firstDayIndex = loop.getDay() === 0 ? 6 : loop.getDay() - 1;
+            for(let i = 0; i < firstDayIndex; i++) {
+                container.innerHTML += `<div></div>`;
+            }
+
+            while(loop <= endObj) {
+                let currentLoopStr = loop.toISOString().split('T')[0];
+                let dayNum = loop.getDate();
+
+                let dayTrans = dbTransactions.filter(t => t.periodId === selectedPeriodId && t.date === currentLoopStr);
+                let hasTrans = dayTrans.length > 0;
+
+                let bgClass = "bg-white border text-gray-700";
+                if(hasTrans) bgClass = "bg-green-100 text-green-800 border-green-300";
+                if(currentLoopStr === selectedDateStr) bgClass = "bg-blue-600 text-white border-blue-600 shadow-sm";
+
+                container.innerHTML += `
+                    <div onclick="selectCalendarDate('${currentLoopStr}')" class="day-item ${bgClass} p-1 hover:scale-105">
+                        <span>${dayNum}</span>
+                        ${hasTrans && currentLoopStr !== selectedDateStr ? '<span class="w-1 h-1 rounded-full bg-green-500 absolute bottom-1"></span>' : ''}
+                    </div>
+                `;
+                loop.setDate(loop.getDate() + 1);
+            }
+        }
+
+        window.selectCalendarDate = (dateStr) => {
+            selectedDateStr = dateStr;
+            document.getElementById('inpDate').value = dateStr;
+            buildCalendar();
+            renderSelectedDayView();
+        };
+
+        function renderSelectedDayView() {
+            document.getElementById('lblSelectedDay').textContent = fmtDate(selectedDateStr);
+            const listSlot = document.getElementById('selectedDayTransList');
+            listSlot.innerHTML = '';
+
+            let dayTrans = dbTransactions.filter(t => t.periodId === selectedPeriodId && t.date === selectedDateStr);
+            let dayInc = 0, dayExp = 0;
+
+            if(dayTrans.length === 0) {
+                listSlot.innerHTML = `<p class="text-center text-gray-400 italic py-4">⚪ Không có giao dịch nào.</p>`;
+            } else {
+                dayTrans.forEach(t => {
+                    if(t.type === 'income') dayInc += t.amount;
+                    else dayExp += t.amount;
+
+                    listSlot.innerHTML += `
+                        <div class="flex justify-between items-center bg-white p-2 rounded border border-gray-100">
+                            <div class="truncate pr-2">
+                                <span class="font-bold text-gray-700">[${t.category}]</span>
+                                <span class="text-gray-500 text-[11px] block truncate">${t.note || '-'}</span>
+                            </div>
+                            <span class="font-bold flex-shrink-0 ${t.type==='income'?'text-green-600':'text-red-500'}">
+                                ${t.type==='income'?'+':'-'}${t.amount.toLocaleString()}đ
+                            </span>
+                        </div>
+                    `;
+                });
+            }
+
+            document.getElementById('lblDayIncome').textContent = dayInc.toLocaleString() + "đ";
+            document.getElementById('lblDayExpense').textContent = dayExp.toLocaleString() + "đ";
+            let bal = dayInc - dayExp;
+            document.getElementById('lblDayBalance').textContent = (bal >= 0 ? '+' : '') + bal.toLocaleString() + "đ";
+            document.getElementById('lblDayBalance').className = `font-bold text-xs ${bal >= 0 ? 'text-green-700':'text-red-600'}`;
+        }
+
+        function updateWorkspaceUI() {
+            const tableBody = document.getElementById('tableBody');
+            const emptyTransMsg = document.getElementById('emptyTransMsg');
+            const searchKey = document.getElementById('inpSearch').value.toLowerCase().trim();
+            tableBody.innerHTML = '';
+
+            let inc = 0, exp = 0;
+            let summary = {}; categoriesDef.expense.forEach(c => summary[c] = 0);
+
+            let filteredTrans = dbTransactions.filter(t => t.periodId === selectedPeriodId);
+            
+            filteredTrans.forEach(t => {
+                if(t.type === 'income') inc += t.amount;
+                else {
+                    exp += t.amount;
+                    if(summary[t.category] !== undefined) summary[t.category] += t.amount;
+                }
+            });
+
+            if(searchKey) {
+                filteredTrans = filteredTrans.filter(t => t.category.toLowerCase().includes(searchKey) || (t.note && t.note.toLowerCase().includes(searchKey)));
+            }
+
+            filteredTrans.sort((a,b) => new Date(b.date) - new Date(a.date));
+            emptyTransMsg.className = filteredTrans.length === 0 ? 'block py-6' : 'hidden';
+
+            filteredTrans.forEach(t => {
+                tableBody.innerHTML += `
+                    <tr class="hover:bg-gray-50 border-b border-gray-100 transition text-xs">
+                        <td class="p-3 text-gray-500 font-semibold">${fmtDate(t.date)}</td>
+                        <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${t.type==='income'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}">${t.category}</span></td>
+                        <td class="p-3 max-w-[140px] truncate text-gray-600" title="${t.note}">${t.note || '-'}</td>
+                        <td class="p-3 text-right font-bold ${t.type==='income'?'text-green-600':'text-red-500'}">${t.type==='income'?'+':'-'}${t.amount.toLocaleString()}đ</td>
+                        <td class="p-3 text-center flex justify-center gap-2.5">
+                            <button onclick="startEditTrans(${t.id})" class="text-amber-500 hover:text-amber-700 transition"><i class="fa-regular fa-pen-to-square"></i> Sửa</button>
+                            <button onclick="deleteTrans(${t.id})" class="text-gray-300 hover:text-red-500 transition"><i class="fa-regular fa-trash-can"></i></button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('txtIncome').textContent = fmtMoney(inc);
+            document.getElementById('txtExpense').textContent = fmtMoney(exp);
+            let bal = inc - exp;
+            document.getElementById('txtBalance').textContent = fmtMoney(bal);
+            document.getElementById('txtBalance').className = `text-xl font-bold mt-1 ${bal >= 0 ? 'text-gray-800' : 'text-red-600'}`;
+
+            buildCalendar();
+            renderSelectedDayView();
+            updateChartAndLegend(summary);
+        }
+
+        document.getElementById('inpSearch').oninput = () => updateWorkspaceUI();
+
+        function updateChartAndLegend(summary) {
+            const labels = Object.keys(summary).filter(k => summary[k] > 0);
+            const values = labels.map(k => summary[k]);
+            const legendTable = document.getElementById('chartLegendTable');
+            legendTable.innerHTML = '';
+            const colors = ['#f87171', '#fb923c', '#facc15', '#4ade80', '#60a5fa', '#818cf8', '#c084fc'];
+
+            Object.keys(summary).forEach((k, idx) => {
+                if(summary[k] > 0) {
+                    legendTable.innerHTML += `
+                        <div class="flex items-center justify-between p-1 bg-gray-50 border rounded text-[11px]">
+                            <span class="text-gray-600 font-medium">${k}</span>
+                            <span class="font-bold text-gray-800">${summary[k].toLocaleString()}đ</span>
+                        </div>
+                    `;
+                }
+            });
+
+            const ctx = document.getElementById('chartCanvas').getContext('2d');
+            if(activeChart) activeChart.destroy();
+            if(values.length === 0) return;
+            activeChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels: labels, datasets: [{ data: values, backgroundColor: colors.slice(0, labels.length) }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+        }
+
+        // --- XUẤT EXCEL ---
+        document.getElementById('btnExportExcel').onclick = () => {
+            let p = dbPeriods.find(x => x.id === selectedPeriodId);
+            let trans = dbTransactions.filter(t => t.periodId === selectedPeriodId).sort((a,b) => new Date(a.date) - new Date(b.date));
+            
+            let data = [
+                ["BÁO CÁO TÀI CHÍNH KỲ HẠN:", p.name],
+                ["Khoảng thời gian:", `${fmtDate(p.start)} đến ${fmtDate(p.end)}`],
+                [],
+                ["Ngày thực hiện", "Loại giao dịch", "Mục đích sử dụng", "Ghi chú chi tiết", "Số tiền (VND)"]
+            ];
+
+            trans.forEach(t => {
+                data.push([fmtDate(t.date), t.type === 'income' ? 'Thu nhập' : 'Chi tiêu', t.category, t.note || '', t.amount]);
+            });
+
+            let wb = XLSX.utils.book_new();
+            let ws = XLSX.utils.aoa_to_sheet(data);
+            XLSX.utils.book_append_sheet(wb, ws, "Data_Finance");
+            XLSX.writeFile(wb, `Finance_${p.name.replace(/\s+/g, '_')}.xlsx`);
+        };
+
+        // --- XUẤT PDF ---
+        document.getElementById('btnExportPDF').onclick = () => {
+            const { jsPDF } = window.jspdf;
+            let doc = new jsPDF();
+            let p = dbPeriods.find(x => x.id === selectedPeriodId);
+            let trans = dbTransactions.filter(t => t.periodId === selectedPeriodId);
+
+            let inc = trans.filter(t => t.type === 'income').reduce((s,x)=>s+x.amount,0);
+            let exp = trans.filter(t => t.type === 'expense').reduce((s,x)=>s+x.amount,0);
+
+            doc.setFont("Helvetica", "bold");
+            doc.text("BAO CAO TAI CHINH PERSONAL", 14, 20);
+            doc.setFont("Helvetica", "normal");
+            doc.text(`Ky han: ${p.name} (${fmtDate(p.start)} -> ${fmtDate(p.end)})`, 14, 28);
+            doc.text(`Tong Thu: +${inc.toLocaleString()} VND`, 14, 38);
+            doc.text(`Tong Chi: -${exp.toLocaleString()} VND`, 14, 44);
+            doc.text(`So Du Con Lai: ${(inc - exp).toLocaleString()} VND`, 14, 50);
+
+            let body = [];
+            trans.forEach(t => {
+                body.push([fmtDate(t.date), t.type==='income'?'THU':'CHI', t.category, t.note || '-', `${t.amount.toLocaleString()}đ`]);
+            });
+
+            doc.autoTable({
+                startY: 58,
+                head: [['Ngay', 'Loai', 'Muc dich', 'Ghi chu', 'So tien']],
+                body: body,
+            });
+
+            doc.save(`Report_${p.name.replace(/\s+/g, '_')}.pdf`);
+        };
+
+        if(loggedUser) showPeriodsScreen();
+        else showAuthScreen();
+    </script>
+</body>
+</html>
