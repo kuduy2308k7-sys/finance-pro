@@ -231,16 +231,29 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        // 1. IMPORT CẤU HÌNH TỪ FILE FIREBASE.JS CỦA BẠN
+        import { auth, db } from "./js/firebase.js";
+        import { 
+            createUserWithEmailAndPassword, 
+            signInWithEmailAndPassword, 
+            signOut, 
+            onAuthStateChanged 
+        } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
+        import { 
+            collection, doc, setDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where 
+        } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
         const categoriesDef = {
             expense: ['Ăn uống', 'Di chuyển / Đi lại', 'Mua sắm cá nhân', 'Hóa đơn gia đình', 'Giải trí / Bạn bè', 'Sức khỏe', 'Khác'],
             income: ['Tiền lương', 'Tiền thưởng', 'Kinh doanh / Đầu tư', 'Khác']
         };
 
-        let dbUsers = JSON.parse(localStorage.getItem('v5_users')) || {};
-        let loggedUser = localStorage.getItem('v5_logged_user') || null;
-        let dbPeriods = JSON.parse(localStorage.getItem('v5_periods')) || [];
-        let dbTransactions = JSON.parse(localStorage.getItem('v5_transactions')) || [];
+        // Biến cục bộ trong bộ nhớ RAM ứng dụng
+        let currentUserUid = null;
+        let loggedUser = null; 
+        let dbPeriods = [];
+        let dbTransactions = [];
 
         let authIsLogin = true;
         let selectedPeriodId = null; 
@@ -274,7 +287,7 @@
         document.getElementById('btnZoomIn').onclick = () => { if (currentZoomIndex < zoomLevels.length - 1) { currentZoomIndex++; applyZoom(); } };
         document.getElementById('btnZoomOut').onclick = () => { if (currentZoomIndex > 0) { currentZoomIndex--; applyZoom(); } };
 
-        // --- FORMAT TIỀN TỆ THỜI GIAN THỰC KHI NHẬP (ĐÃ KHẮC PHỤC LỖI NHẢY SỐ HOÀN TOÀN) ---
+        // --- FORMAT TIỀN TỆ THỜI GIAN THỰC ---
         const inpAmountDisplay = document.getElementById('inpAmountDisplay');
         inpAmountDisplay.oninput = (e) => {
             let cleanVal = e.target.value.replace(/[^0-9]/g, '');
@@ -286,8 +299,6 @@
         };
 
         const getInpAmountValue = () => parseInt(inpAmountDisplay.value.replace(/[^0-9]/g, '')) || 0;
-        
-        // Sửa cơ chế: Thay thế trực tiếp giá trị chuỗi hiển thị, tránh xung đột kích hoạt ngược sự kiện oninput
         const setInpAmountValue = (num) => { 
             inpAmountDisplay.value = num ? parseInt(num).toLocaleString('vi-VN') : ''; 
         };
@@ -323,7 +334,7 @@
             renderSelectedDayView();
         };
 
-        // --- XỬ LÝ ĐĂNG NHẬP / ĐĂNG KÝ ---
+        // --- XỬ LÝ ĐĂNG NHẬP / ĐĂNG KÝ BẰNG USERNAME TRÊN FIREBASE ---
         const btnToggleAuth = document.getElementById('btnToggleAuth');
         btnToggleAuth.onclick = () => {
             authIsLogin = !authIsLogin;
@@ -331,73 +342,154 @@
             document.getElementById('btnAuthSubmit').textContent = authIsLogin ? "Đăng Nhập" : "Đăng Ký";
             btnToggleAuth.textContent = authIsLogin ? "Chưa có tài khoản? Đăng ký" : "Quay lại đăng nhập";
         };
-        document.getElementById('authForm').onsubmit = (e) => {
+
+        document.getElementById('authForm').onsubmit = async (e) => {
             e.preventDefault();
             const u = document.getElementById('authUsername').value.trim();
             const p = document.getElementById('authPassword').value;
+            const fakeEmail = `${u}@financepro.local`;
+
             if(!authIsLogin) {
-                if(dbUsers[u]) { alert('Tài khoản đã tồn tại!'); return; }
-                dbUsers[u] = p; localStorage.setItem('v5_users', JSON.stringify(dbUsers));
-                alert('Đăng ký thành công!'); authIsLogin = true; btnToggleAuth.click();
+                try {
+                    await createUserWithEmailAndPassword(auth, fakeEmail, p);
+                    alert('Đăng ký tài khoản mới thành công!');
+                    authIsLogin = true;
+                    btnToggleAuth.click();
+                } catch (err) {
+                    if (err.code === 'auth/email-already-in-use') alert('Tài khoản đã tồn tại!');
+                    else if (err.code === 'auth/weak-password') alert('Mật khẩu quá yếu! Yêu cầu ít nhất 6 ký tự.');
+                    else alert('Lỗi đăng ký: ' + err.message);
+                }
             } else {
-                if(dbUsers[u] && dbUsers[u] === p) {
-                    loggedUser = u; localStorage.setItem('v5_logged_user', u); showPeriodsScreen();
-                } else alert('Sai tài khoản hoặc mật khẩu!');
+                try {
+                    await signInWithEmailAndPassword(auth, fakeEmail, p);
+                } catch (err) {
+                    alert('Sai tài khoản hoặc mật khẩu!');
+                }
             }
             document.getElementById('authForm').reset();
         };
-        document.getElementById('btnLogout').onclick = () => { localStorage.removeItem('v5_logged_user'); loggedUser = null; showAuthScreen(); };
+
+        document.getElementById('btnLogout').onclick = async () => {
+            await signOut(auth);
+        };
         document.getElementById('navLogo').onclick = () => { if(loggedUser) showPeriodsScreen(); };
         document.getElementById('btnBackToPeriods').onclick = () => showPeriodsScreen();
 
-        // --- XỬ LÝ KỲ HẠN ---
-        document.getElementById('periodForm').onsubmit = (e) => {
+        // --- ĐỒNG BỘ ĐỒNG THỜI DỮ LIỆU FIRESTORE KHI ĐĂNG NHẬP THÀNH CÔNG ---
+        async function loadUserData(uid) {
+            try {
+                // Tải Kỳ hạn
+                const periodSnap = await getDocs(collection(db, "users", uid, "periods"));
+                dbPeriods = [];
+                periodSnap.forEach(d => {
+                    dbPeriods.push({ id: d.id, ...d.data() });
+                });
+
+                // Tải Giao dịch
+                const transSnap = await getDocs(collection(db, "users", uid, "transactions"));
+                dbTransactions = [];
+                transSnap.forEach(d => {
+                    dbTransactions.push({ id: d.id, ...d.data() });
+                });
+
+                showPeriodsScreen();
+            } catch (err) {
+                console.error("Lỗi tải dữ liệu Firestore:", err);
+            }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUserUid = user.uid;
+                loggedUser = user.email.split('@')[0];
+                loadUserData(user.uid);
+            } else {
+                currentUserUid = null;
+                loggedUser = null;
+                dbPeriods = [];
+                dbTransactions = [];
+                showAuthScreen();
+            }
+        });
+
+        // --- XỬ LÝ KỲ HẠN (THÊM / XÓA LÊN FIRESTORE) ---
+        document.getElementById('periodForm').onsubmit = async (e) => {
             e.preventDefault();
             const name = document.getElementById('pName').value.trim();
             const start = document.getElementById('pStart').value;
             const textEnd = document.getElementById('pEnd').value;
             if(new Date(start) > new Date(textEnd)) { alert('Ngày bắt đầu không hợp lệ!'); return; }
-            dbPeriods.push({ id: Date.now(), user: loggedUser, name, start, end: textEnd });
-            localStorage.setItem('v5_periods', JSON.stringify(dbPeriods));
-            document.getElementById('pName').value = '';
-            renderPeriods();
+
+            const newId = "P_" + Date.now();
+            const periodData = { user: loggedUser, name, start, end: textEnd };
+
+            try {
+                await setDoc(doc(db, "users", currentUserUid, "periods", newId), periodData);
+                dbPeriods.push({ id: newId, ...periodData });
+                document.getElementById('pName').value = '';
+                renderPeriods();
+            } catch (err) {
+                alert("Không thể lưu kỳ hạn lên cloud: " + err.message);
+            }
         };
 
         function renderPeriods() {
             const container = document.getElementById('periodListSlot');
             container.innerHTML = '';
-            let userPeriods = dbPeriods.filter(p => p.user === loggedUser).sort((a,b) => b.id - a.id);
+            let userPeriods = dbPeriods.sort((a,b) => b.id.localeCompare(a.id));
             document.getElementById('emptyPeriodMsg').className = userPeriods.length === 0 ? 'block' : 'hidden';
             
             userPeriods.forEach(p => {
                 let cost = dbTransactions.filter(t => t.periodId === p.id && t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-                container.innerHTML += `
-                    <div class="bg-white p-5 rounded-xl shadow-sm border hover:border-blue-500 transition flex flex-col justify-between">
-                        <div>
-                            <div class="flex justify-between items-start">
-                                <h4 class="font-bold text-gray-800 text-base">${p.name}</h4>
-                                <button onclick="deletePeriod(event, ${p.id})" class="text-gray-300 hover:text-red-500 transition text-xs"><i class="fa-regular fa-trash-can"></i> Xóa kỳ</button>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-1">Khoảng: ${fmtDate(p.start)} ➔ ${fmtDate(p.end)}</p>
+                
+                const card = document.createElement('div');
+                card.className = "bg-white p-5 rounded-xl shadow-sm border hover:border-blue-500 transition flex flex-col justify-between";
+                card.innerHTML = `
+                    <div>
+                        <div class="flex justify-between items-start">
+                            <h4 class="font-bold text-gray-800 text-base">${p.name}</h4>
+                            <button class="btn-del-period text-gray-300 hover:text-red-500 transition text-xs"><i class="fa-regular fa-trash-can"></i> Xóa kỳ</button>
                         </div>
-                        <div class="mt-5 pt-3 border-t flex justify-between items-center">
-                            <span class="text-xs font-bold text-red-500">Đã chi: ${cost.toLocaleString()}đ</span>
-                            <button onclick="showWorkspaceScreen(${p.id})" class="px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-lg transition shadow-xs">Vào Quản Lý</button>
-                        </div>
+                        <p class="text-xs text-gray-500 mt-1">Khoảng: ${fmtDate(p.start)} ➔ ${fmtDate(p.end)}</p>
+                    </div>
+                    <div class="mt-5 pt-3 border-t flex justify-between items-center">
+                        <span class="text-xs font-bold text-red-500">Đã chi: ${cost.toLocaleString()}đ</span>
+                        <button class="btn-goto-workspace px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-lg transition shadow-xs">Vào Quản Lý</button>
                     </div>
                 `;
+
+                card.querySelector('.btn-del-period').onclick = (e) => {
+                    e.stopPropagation();
+                    deletePeriod(p.id);
+                };
+                card.querySelector('.btn-goto-workspace').onclick = () => showWorkspaceScreen(p.id);
+
+                container.appendChild(card);
             });
         }
-        window.deletePeriod = (event, id) => {
-            event.stopPropagation();
-            if(confirm('Bạn có chắc chắn muốn xóa kỳ hạn này?')) {
-                dbPeriods = dbPeriods.filter(p => p.id !== id);
-                dbTransactions = dbTransactions.filter(t => t.periodId !== id);
-                localStorage.setItem('v5_periods', JSON.stringify(dbPeriods));
-                localStorage.setItem('v5_transactions', JSON.stringify(dbTransactions));
-                renderPeriods();
+
+        async function deletePeriod(id) {
+            if(confirm('Bạn có chắc chắn muốn xóa kỳ hạn này cùng toàn bộ dữ liệu bên trong?')) {
+                try {
+                    // Xóa trên Firestore
+                    await deleteDoc(doc(db, "users", currentUserUid, "periods", id));
+                    
+                    // Xóa các giao dịch thuộc kỳ hạn này trên Firestore
+                    let relatedTrans = dbTransactions.filter(t => t.periodId === id);
+                    for (let t of relatedTrans) {
+                        await deleteDoc(doc(db, "users", currentUserUid, "transactions", t.id));
+                    }
+
+                    // Cập nhật mảng local
+                    dbPeriods = dbPeriods.filter(p => p.id !== id);
+                    dbTransactions = dbTransactions.filter(t => t.periodId !== id);
+                    renderPeriods();
+                } catch (err) {
+                    alert("Lỗi khi xóa dữ liệu: " + err.message);
+                }
             }
-        };
+        }
 
         // --- WORKSPACE LOGIC ---
         function setFormType(t) {
@@ -412,7 +504,7 @@
         document.getElementById('typeExp').onclick = () => setFormType('expense');
         document.getElementById('typeInc').onclick = () => setFormType('income');
 
-        document.getElementById('transForm').onsubmit = (e) => {
+        document.getElementById('transForm').onsubmit = async (e) => {
             e.preventDefault();
             const amount = getInpAmountValue();
             if(amount <= 0) { alert('Vui lòng nhập số tiền hợp lệ!'); return; }
@@ -421,31 +513,40 @@
             const note = document.getElementById('inpNote').value.trim();
             const editId = document.getElementById('editingTransId').value;
 
+            const transData = { periodId: selectedPeriodId, type: activeTransType, amount, category, date, note };
+
             if(editId) { 
-                let transIdx = dbTransactions.findIndex(t => t.id == editId);
-                if(transIdx !== -1) {
-                    dbTransactions[transIdx] = { ...dbTransactions[transIdx], type: activeTransType, amount, category, date, note };
+                try {
+                    await updateDoc(doc(db, "users", currentUserUid, "transactions", editId), transData);
+                    let transIdx = dbTransactions.findIndex(t => t.id == editId);
+                    if(transIdx !== -1) dbTransactions[transIdx] = { id: editId, ...transData };
+                    cancelEditMode();
+                } catch (err) {
+                    alert("Lỗi khi cập nhật: " + err.message);
                 }
-                cancelEditMode();
             } else { 
-                dbTransactions.push({ id: Date.now(), periodId: selectedPeriodId, type: activeTransType, amount, category, date, note });
+                try {
+                    const transId = "T_" + Date.now();
+                    await setDoc(doc(db, "users", currentUserUid, "transactions", transId), transData);
+                    dbTransactions.push({ id: transId, ...transData });
+                } catch (err) {
+                    alert("Lỗi khi thêm mới: " + err.message);
+                }
             }
 
-            localStorage.setItem('v5_transactions', JSON.stringify(dbTransactions));
             setInpAmountValue(0);
             document.getElementById('inpNote').value = '';
-            
             selectedDateStr = date;
             updateWorkspaceUI();
         };
 
-        window.startEditTrans = (id) => {
+        function startEditTrans(id) {
             let t = dbTransactions.find(x => x.id == id);
             if(!t) return;
             document.getElementById('formActionTitle').innerHTML = `<i class="fa-solid fa-pen-to-square text-amber-500 mr-2"></i>Sửa Giao Dịch`;
             document.getElementById('editingTransId').value = t.id;
             setFormType(t.type);
-            setInpAmountValue(t.amount); // Đã an toàn tuyệt đối, không gây lặp lại dữ liệu
+            setInpAmountValue(t.amount);
             document.getElementById('inpCategory').value = t.category;
             document.getElementById('inpDate').value = t.date;
             document.getElementById('inpNote').value = t.note;
@@ -453,7 +554,7 @@
             document.getElementById('btnSubmitForm').textContent = "Cập Nhật Thay Đổi";
             document.getElementById('btnCancelEdit').classList.remove('hidden');
             window.scrollTo({ top: document.getElementById('transForm').offsetTop - 20, behavior: 'smooth' });
-        };
+        }
 
         function cancelEditMode() {
             document.getElementById('formActionTitle').innerHTML = `<i class="fa-solid fa-plus text-blue-500 mr-2"></i>Thêm Giao Dịch`;
@@ -466,13 +567,17 @@
         }
         document.getElementById('btnCancelEdit').onclick = () => cancelEditMode();
 
-        window.deleteTrans = (id) => {
+        async function deleteTrans(id) {
             if(confirm('Bạn có muốn xóa mục kê khai tài chính này không?')) {
-                dbTransactions = dbTransactions.filter(t => t.id !== id);
-                localStorage.setItem('v5_transactions', JSON.stringify(dbTransactions));
-                updateWorkspaceUI();
+                try {
+                    await deleteDoc(doc(db, "users", currentUserUid, "transactions", id));
+                    dbTransactions = dbTransactions.filter(t => t.id !== id);
+                    updateWorkspaceUI();
+                } catch (err) {
+                    alert("Lỗi khi xóa: " + err.message);
+                }
             }
-        };
+        }
 
         function buildCalendar() {
             const container = document.getElementById('calendarDays');
@@ -502,22 +607,25 @@
                 if(hasTrans) bgClass = "bg-green-100 text-green-800 border-green-300";
                 if(currentLoopStr === selectedDateStr) bgClass = "bg-blue-600 text-white border-blue-600 shadow-sm";
 
-                container.innerHTML += `
-                    <div onclick="selectCalendarDate('${currentLoopStr}')" class="day-item ${bgClass} p-1 hover:scale-105">
-                        <span>${dayNum}</span>
-                        ${hasTrans && currentLoopStr !== selectedDateStr ? '<span class="w-1 h-1 rounded-full bg-green-500 absolute bottom-1"></span>' : ''}
-                    </div>
+                const dayDiv = document.createElement('div');
+                dayDiv.className = `day-item ${bgClass} p-1 hover:scale-105`;
+                dayDiv.innerHTML = `
+                    <span>${dayNum}</span>
+                    ${hasTrans && currentLoopStr !== selectedDateStr ? '<span class="w-1 h-1 rounded-full bg-green-500 absolute bottom-1"></span>' : ''}
                 `;
+                dayDiv.onclick = () => selectCalendarDate(currentLoopStr);
+                
+                container.appendChild(dayDiv);
                 loop.setDate(loop.getDate() + 1);
             }
         }
 
-        window.selectCalendarDate = (dateStr) => {
+        function selectCalendarDate(dateStr) {
             selectedDateStr = dateStr;
             document.getElementById('inpDate').value = dateStr;
             buildCalendar();
             renderSelectedDayView();
-        };
+        }
 
         function renderSelectedDayView() {
             document.getElementById('lblSelectedDay').textContent = fmtDate(selectedDateStr);
@@ -582,18 +690,22 @@
             emptyTransMsg.className = filteredTrans.length === 0 ? 'block py-6' : 'hidden';
 
             filteredTrans.forEach(t => {
-                tableBody.innerHTML += `
-                    <tr class="hover:bg-gray-50 border-b border-gray-100 transition text-xs">
-                        <td class="p-3 text-gray-500 font-semibold">${fmtDate(t.date)}</td>
-                        <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${t.type==='income'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}">${t.category}</span></td>
-                        <td class="p-3 max-w-[140px] truncate text-gray-600" title="${t.note}">${t.note || '-'}</td>
-                        <td class="p-3 text-right font-bold ${t.type==='income'?'text-green-600':'text-red-500'}">${t.type==='income'?'+':'-'}${t.amount.toLocaleString()}đ</td>
-                        <td class="p-3 text-center flex justify-center gap-2.5">
-                            <button onclick="startEditTrans(${t.id})" class="text-amber-500 hover:text-amber-700 transition"><i class="fa-regular fa-pen-to-square"></i> Sửa</button>
-                            <button onclick="deleteTrans(${t.id})" class="text-gray-300 hover:text-red-500 transition"><i class="fa-regular fa-trash-can"></i></button>
-                        </td>
-                    </tr>
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-50 border-b border-gray-100 transition text-xs";
+                tr.innerHTML = `
+                    <td class="p-3 text-gray-500 font-semibold">${fmtDate(t.date)}</td>
+                    <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${t.type==='income'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}">${t.category}</span></td>
+                    <td class="p-3 max-w-[140px] truncate text-gray-600" title="${t.note}">${t.note || '-'}</td>
+                    <td class="p-3 text-right font-bold ${t.type==='income'?'text-green-600':'text-red-500'}">${t.type==='income'?'+':'-'}${t.amount.toLocaleString()}đ</td>
+                    <td class="p-3 text-center flex justify-center gap-2.5">
+                        <button class="btn-edit-trans text-amber-500 hover:text-amber-700 transition"><i class="fa-regular fa-pen-to-square"></i> Sửa</button>
+                        <button class="btn-del-trans text-gray-300 hover:text-red-500 transition"><i class="fa-regular fa-trash-can"></i></button>
+                    </td>
                 `;
+
+                tr.querySelector('.btn-edit-trans').onclick = () => startEditTrans(t.id);
+                tr.querySelector('.btn-del-trans').onclick = () => deleteTrans(t.id);
+                tableBody.appendChild(tr);
             });
 
             document.getElementById('txtIncome').textContent = fmtMoney(inc);
@@ -690,11 +802,6 @@
 
             doc.save(`Report_${p.name.replace(/\s+/g, '_')}.pdf`);
         };
-
-        if(loggedUser) showPeriodsScreen();
-        else showAuthScreen();
     </script>
-<script type="module" src="./js/firebase.js"></script>
-<script type="module" src="./js/auth.js"></script>
 </body>
 </html>
