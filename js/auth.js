@@ -29,3 +29,9 @@ export async function logout(){
 
     return await signOut(auth);
 }
+
+// Đoạn code test tạm thời cho Bước 6
+import { auth } from "./firebase.js";
+
+console.log("--- KIỂM TRA KẾT NỐI FIREBASE ---");
+console.log(auth);
